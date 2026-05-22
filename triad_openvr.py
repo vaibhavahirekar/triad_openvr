@@ -3,6 +3,7 @@ import sys
 import openvr
 import math
 import json
+import numpy as np
 
 from functools import lru_cache
 
@@ -74,6 +75,7 @@ class vr_tracked_device():
         self.device_class = device_class
         self.index = index
         self.vr = vr_obj
+        self._origin_inv = None
 
     @lru_cache(maxsize=None)
     def get_serial(self):
@@ -88,6 +90,33 @@ class vr_tracked_device():
     def is_charging(self):
         return self.vr.getBoolTrackedDeviceProperty(self.index, openvr.Prop_DeviceIsCharging_Bool)
 
+    def set_origin(self):
+        """Sets the current pose as the origin for all subsequent get_pose_* calls."""
+        pose = get_pose(self.vr)
+        if pose[self.index].bPoseIsValid:
+            m = pose[self.index].mDeviceToAbsoluteTracking
+            T = np.array([
+                [m[0][0], m[0][1], m[0][2], m[0][3]],
+                [m[1][0], m[1][1], m[1][2], m[1][3]],
+                [m[2][0], m[2][1], m[2][2], m[2][3]],
+                [0,       0,       0,       1      ]
+            ])
+            self._origin_inv = np.linalg.inv(T)
+
+    def clear_origin(self):
+        self._origin_inv = None
+
+    def _apply_origin(self, m):
+        """Applies the custom origin transform to a 3x4 pose matrix."""
+        if self._origin_inv is None:
+            return m
+        T = np.array([
+            [m[0][0], m[0][1], m[0][2], m[0][3]],
+            [m[1][0], m[1][1], m[1][2], m[1][3]],
+            [m[2][0], m[2][1], m[2][2], m[2][3]],
+            [0,       0,       0,       1      ]
+        ])
+        return self._origin_inv @ T   # returns 4x4 numpy array
 
     def sample(self,num_samples,sample_rate):
         interval = 1/sample_rate
@@ -106,7 +135,8 @@ class vr_tracked_device():
         if pose == None:
             pose = get_pose(self.vr)
         if pose[self.index].bPoseIsValid:
-            return convert_to_euler(pose[self.index].mDeviceToAbsoluteTracking)
+            m = self._apply_origin(pose[self.index].mDeviceToAbsoluteTracking)
+            return convert_to_euler(m)
         else:
             return None
 
