@@ -211,6 +211,94 @@ class vr_tracked_device():
         """
         self.vr.triggerHapticPulse(self.index ,axis_id, duration_micros)
 
+class RelativeTrackerSystem():
+    """
+    Expresses the moving tracker's position in a user-defined world frame,
+    using a static reference tracker placed at a known world position.
+
+    Coordinate convention: z-axis points vertically upward.
+
+    Usage:
+        sys = RelativeTrackerSystem(tracker_ref, tracker_moving, p_ref=[x, y, z])
+        sys.calibrate()           # call once when tracker_ref is at its fixed position
+        pos = sys.get_position()  # returns [x, y, z] in world frame
+    """
+
+    def __init__(self, tracker_ref, tracker_moving, p_ref):
+        """
+        tracker_ref:    vr_tracked_device placed at a fixed, known world position
+        tracker_moving: vr_tracked_device that moves freely
+        p_ref:          [x, y, z] position of tracker_ref in the world frame (metres)
+        """
+        self.tracker_ref = tracker_ref
+        self.tracker_moving = tracker_moving
+        self.p_ref = np.array(p_ref, dtype=float)
+        self._T_ref_inv = None
+
+    def calibrate(self):
+        """
+        Snapshot tracker_ref's current VR pose as the reference frame.
+        Call this once while tracker_ref is stationary at its known position.
+        Returns True on success.
+        """
+        pose = get_pose(self.tracker_ref.vr)
+        if not pose[self.tracker_ref.index].bPoseIsValid:
+            return False
+        m = pose[self.tracker_ref.index].mDeviceToAbsoluteTracking
+        T = np.array([
+            [m[0][0], m[0][1], m[0][2], m[0][3]],
+            [m[1][0], m[1][1], m[1][2], m[1][3]],
+            [m[2][0], m[2][1], m[2][2], m[2][3]],
+            [0,       0,       0,       1      ]
+        ])
+        self._T_ref_inv = np.linalg.inv(T)
+        return True
+
+    def get_position(self):
+        """
+        Returns [x, y, z] of the moving tracker in the world frame, or None if
+        either tracker pose is invalid or calibrate() has not been called.
+
+        Computation:
+            T_rel  = inv(T_ref_snapshot) @ T_moving_current
+            p_world = p_ref + T_rel[:3, 3]
+        """
+        if self._T_ref_inv is None:
+            raise RuntimeError("Call calibrate() before get_position().")
+        pose = get_pose(self.tracker_moving.vr)
+        if not pose[self.tracker_moving.index].bPoseIsValid:
+            return None
+        m = pose[self.tracker_moving.index].mDeviceToAbsoluteTracking
+        T_moving = np.array([
+            [m[0][0], m[0][1], m[0][2], m[0][3]],
+            [m[1][0], m[1][1], m[1][2], m[1][3]],
+            [m[2][0], m[2][1], m[2][2], m[2][3]],
+            [0,       0,       0,       1      ]
+        ])
+        T_rel = self._T_ref_inv @ T_moving
+        return (self.p_ref + T_rel[:3, 3]).tolist()
+
+    def get_pose_matrix(self):
+        """
+        Returns the full 4x4 world-frame transform of the moving tracker,
+        with p_ref baked into the translation.
+        """
+        if self._T_ref_inv is None:
+            raise RuntimeError("Call calibrate() before get_pose_matrix().")
+        pose = get_pose(self.tracker_moving.vr)
+        if not pose[self.tracker_moving.index].bPoseIsValid:
+            return None
+        m = pose[self.tracker_moving.index].mDeviceToAbsoluteTracking
+        T_moving = np.array([
+            [m[0][0], m[0][1], m[0][2], m[0][3]],
+            [m[1][0], m[1][1], m[1][2], m[1][3]],
+            [m[2][0], m[2][1], m[2][2], m[2][3]],
+            [0,       0,       0,       1      ]
+        ])
+        T_rel = self._T_ref_inv @ T_moving
+        T_rel[:3, 3] += self.p_ref
+        return T_rel
+
 class vr_tracking_reference(vr_tracked_device):
     def get_mode(self):
         return self.vr.getStringTrackedDeviceProperty(self.index,openvr.Prop_ModeLabel_String).decode('utf-8').upper()
