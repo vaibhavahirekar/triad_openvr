@@ -30,10 +30,14 @@ if interval:
         if msvcrt.kbhit() and msvcrt.getwch().lower() == "q":
             break
         start = time.time()
+        ref_pose = rel.tracker_ref.get_pose_euler()
         mat = rel.get_pose_matrix()
-        if mat is not None:
-            rows = ["  ".join("%.4f" % mat[r][c] for c in range(4)) for r in range(3)]
-            print("\r" + " | ".join(rows), end="")
+        if ref_pose is not None and mat is not None:
+            rx, ry, rz, ryaw, rpitch, rroll = ref_pose
+            x, y, z, yaw, pitch, roll = triad_openvr.convert_to_euler(mat)
+            print("\r[ref]  x=%.4f y=%.4f z=%.4f  yaw=%.2f pitch=%.2f roll=%.2f    "
+                  "[moving]  x=%.4f y=%.4f z=%.4f  yaw=%.2f pitch=%.2f roll=%.2f"
+                  % (rx, ry, rz, ryaw, rpitch, rroll, x, y, z, yaw, pitch, roll), end="")
         sleep_time = interval - (time.time() - start)
         if sleep_time > 0:
             time.sleep(sleep_time)
